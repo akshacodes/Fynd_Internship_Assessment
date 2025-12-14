@@ -1,0 +1,6 @@
+pandas
+ollama
+matplotlib
+seaborn
+jupyter
+ipykernel

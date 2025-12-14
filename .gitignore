@@ -1,0 +1,12 @@
+# Ignore virtual environment folder
+venv/
+
+# Ignore Python cache files
+__pycache__/
+*.pyc
+
+# Ignore Jupyter Notebook checkpoints (auto-save backups)
+.ipynb_checkpoints/
+
+# Ignore VS Code settings (optional, but good practice)
+.vscode/
