@@ -12,12 +12,15 @@ DATA_FILE = "reviews_db.csv"
 if "GEMINI_API_KEY" in st.secrets:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 else:
-    # Fallback for local testing if you haven't set secrets yet
-    # You can remove this 'else' block once deployed
-    pass 
+    # Fallback if using local .env file (optional)
+    from dotenv import load_dotenv
+    load_dotenv()
+    if "GOOGLE_API_KEY" in os.environ:
+        genai.configure(api_key=os.environ["GOOGLE_API_KEY"])
 
 def get_gemini_response(prompt):
     try:
+        # Using the Flash model to avoid quota errors
         model = genai.GenerativeModel("models/gemini-2.5-flash")
         response = model.generate_content(prompt)
         return response.text
@@ -104,12 +107,10 @@ with tab_user:
     with col_left:
         st.subheader("Rate your experience")
         with st.form("user_form"):
-            # --- CHANGED: SLIDER TO CLICKABLE STARS ---
             st.write("Click to rate:")
             rating_input = st.feedback("stars")
             
-            # Logic: st.feedback returns 0,1,2,3,4. We need 1-5.
-            # If user doesn't click, we default to 5.
+            # Logic: st.feedback returns 0-4. We need 1-5.
             stars = (rating_input + 1) if rating_input is not None else 5
             
             review = st.text_area("Share details of your own experience")
@@ -126,27 +127,49 @@ with tab_user:
     with col_right:
         data = load_data()
         if not data.empty:
-            avg_rating = data['rating'].mean()
-            st.markdown(f"### {avg_rating:.1f} ⭐⭐⭐⭐⭐ ({len(data)} reviews)")
-            st.divider()
+            # --- FILTER: Hide rows with errors immediately ---
+            clean_data = data[~data['ai_reply'].astype(str).str.contains("Error|429|404", case=False, na=False)]
             
-            for index, row in data.sort_index(ascending=False).iterrows():
-                c1, c2 = st.columns([1, 10])
-                with c1: st.markdown(f"## {row['avatar']}")
-                with c2:
-                    st.markdown(f"**{row['user_name']}** &nbsp; <span style='color:grey'>{row['timestamp']}</span>", unsafe_allow_html=True)
-                    st.markdown(f"{'⭐' * int(row['rating'])}")
-                    st.write(row['review_text'])
-                    if pd.notna(row['ai_reply']):
-                        st.info(f"**Response from the owner:**\n\n{row['ai_reply']}")
-                    st.divider()
+            if not clean_data.empty:
+                avg_rating = clean_data['rating'].mean()
+                st.markdown(f"### {avg_rating:.1f} ⭐⭐⭐⭐⭐ ({len(clean_data)} reviews)")
+                st.divider()
+                
+                for index, row in clean_data.sort_index(ascending=False).iterrows():
+                    c1, c2 = st.columns([1, 10])
+                    with c1: st.markdown(f"## {row['avatar']}")
+                    with c2:
+                        st.markdown(f"**{row['user_name']}** &nbsp; <span style='color:grey'>{row['timestamp']}</span>", unsafe_allow_html=True)
+                        st.markdown(f"{'⭐' * int(row['rating'])}")
+                        st.write(row['review_text'])
+                        if pd.notna(row['ai_reply']):
+                            st.info(f"**Response from the owner:**\n\n{row['ai_reply']}")
+                        st.divider()
+            else:
+                st.info("No reviews yet.")
         else:
             st.info("No reviews yet.")
 
 # === DASHBOARD 2: ADMIN VIEW ===
 with tab_admin:
     st.header("Internal Feedback Monitor")
-    if st.button("🔄 Refresh Admin Data"): st.rerun()
+    
+    col_a, col_b = st.columns(2)
+    with col_a:
+        if st.button("🔄 Refresh Admin Data"): 
+            st.rerun()
+    with col_b:
+        # --- NEW BUTTON TO DELETE BAD DATA ---
+        if st.button("🗑️ Delete Corrupted Reviews"):
+            df = load_data()
+            if not df.empty:
+                # Remove rows containing "Error"
+                df = df[~df['ai_reply'].astype(str).str.contains("Error|429|404", case=False, na=False)]
+                df.to_csv(DATA_FILE, index=False)
+                st.success("Corrupted data removed!")
+                time.sleep(1)
+                st.rerun()
+
     data = load_data()
     if not data.empty:
         st.dataframe(data.sort_index(ascending=False), use_container_width=True)
