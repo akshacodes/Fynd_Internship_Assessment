@@ -10,3 +10,5 @@ __pycache__/
 
 # Ignore VS Code settings (optional, but good practice)
 .vscode/
+
+.streamlit/secrets.toml
