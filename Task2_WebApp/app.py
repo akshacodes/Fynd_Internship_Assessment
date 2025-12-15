@@ -8,100 +8,96 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime
 
-# --- AUTHENTICATION & CONNECTION (Google Sheets) ---
+# Page config must be the first Streamlit command
+st.set_page_config(page_title="Fynd Reviews", layout="wide")
+
+# --- AUTHENTICATION ---
 
 @st.cache_resource
 def get_google_sheet():
     try:
-        # Define the scope for Sheets and Drive APIs
         scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-        
-        # Load credentials from Streamlit secrets
+        # Load credentials from secrets.toml
         creds_dict = st.secrets["gcp_service_account"]
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-        
-        # Authorize and open the sheet
         client = gspread.authorize(creds)
-        # Opening the specific sheet name
-        sheet = client.open("Fynd Review Dashboard").sheet1  
-        return sheet
-    except Exception as e:
+        
+        # Connect to the specific sheet
+        return client.open("Fynd Review Dashboard").sheet1  
+    except Exception:
         return None
 
-# --- AUTHENTICATION (Gemini AI) ---
+# Setup Gemini API
 if "GEMINI_API_KEY" in st.secrets:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-else:
-    # Fallback for local testing
-    if "GOOGLE_API_KEY" in os.environ:
-        genai.configure(api_key=os.environ["GOOGLE_API_KEY"])
+elif "GOOGLE_API_KEY" in os.environ:
+    genai.configure(api_key=os.environ["GOOGLE_API_KEY"])
 
 def get_gemini_response(prompt):
     try:
-        # Using the stable model to avoid 429 errors
+        # Using flash-latest for better free tier limits
         model = genai.GenerativeModel("models/gemini-flash-latest")
         response = model.generate_content(prompt)
         return response.text
     except Exception as e:
         return f"Error: {str(e)}"
 
-# --- DATA HANDLING ---
+# --- DATA FUNCTIONS ---
 
 def load_data():
-    """Fetches all data from the Google Sheet."""
     sheet = get_google_sheet()
     if sheet:
         try:
             data = sheet.get_all_records()
             df = pd.DataFrame(data)
-            # Force all column names to be lowercase to fix "Anonymous" and empty text issues
+            # Normalize headers to lowercase to avoid key errors
             df.columns = [c.lower() for c in df.columns]
             return df
-        except Exception as e:
+        except:
             return pd.DataFrame()
     return pd.DataFrame()
 
 def save_entry(rating, text, reply, summary, action):
-    """Appends a new review row to the Google Sheet."""
     sheet = get_google_sheet()
     if not sheet:
         st.error("Database connection failed. Cannot save.")
         return
 
+    # Random placeholders for demo purposes
     fake_names = ["Alex R.", "Sam K.", "Jordan P.", "Casey M.", "Taylor S.", "Priya D.", "Rohan G."]
     fake_avatars = ["🐶", "🐱", "🦊", "🐻", "🐼", "🐨", "🐯"]
     
-    # Prepare the row data (Order matches Sheet Headers)
-    new_row = [
-        datetime.now().strftime("%Y-%m-%d"), # timestamp
-        rating,                              # rating
-        text,                                # review_text
-        reply,                               # ai_reply
-        summary,                             # ai_summary
-        action,                              # ai_action
-        random.choice(fake_names),           # user_name
-        random.choice(fake_avatars)          # avatar
+    row = [
+        datetime.now().strftime("%Y-%m-%d"), 
+        rating,                              
+        text,                                
+        reply,                               
+        summary,                             
+        action,                              
+        random.choice(fake_names),           
+        random.choice(fake_avatars)          
     ]
     
     try:
-        sheet.append_row(new_row)
+        sheet.append_row(row)
     except Exception as e:
-        st.error(f"Failed to save data: {e}")
+        st.error(f"Save failed: {e}")
 
-# --- AI GENERATION ---
+# --- AI LOGIC ---
+
 def generate_ai_content(review_text, rating):
-    # 1. User Reply
+    # 1. Generate polite reply for the user
     reply_prompt = f"""
-    You are a business owner replying to a customer review. 
-    Review: "{review_text}" (Rating: {rating}/5).
-    Write a short, professional, and grateful response. Max 2 sentences.
+    You are a business owner. Write a short, professional, grateful response 
+    to this customer review: "{review_text}" (Rating: {rating}/5). 
+    Max 2 sentences.
     """
     reply = get_gemini_response(reply_prompt)
 
-    # 2. Admin Summary & Action
+    # 2. Generate summary/action for admin
     admin_prompt = f"""
     Analyze this review: "{review_text}" (Rating: {rating}/5).
-    1. Summarize key point in 5 words.
+    1. Summarize in 5 words.
     2. Suggest one specific business action.
     
     Format:
@@ -110,6 +106,7 @@ def generate_ai_content(review_text, rating):
     """
     analysis = get_gemini_response(admin_prompt)
     
+    # Simple parsing logic
     try:
         lines = analysis.split('\n')
         summary = next((line.split(': ')[1] for line in lines if 'Summary:' in line), "General Feedback")
@@ -120,22 +117,20 @@ def generate_ai_content(review_text, rating):
 
     return reply, summary, action
 
-# --- MAIN APP UI ---
-st.set_page_config(page_title="Fynd Reviews", layout="wide")
+# --- MAIN UI ---
 
 st.title("🚀 Fynd Dashboard")
 
 tab_user, tab_admin = st.tabs(["⭐ Public Reviews", "🛡️ Admin Dashboard"])
 
-# === DASHBOARD 1: USER VIEW ===
+# === USER TAB ===
 with tab_user:
     col_left, col_right = st.columns([1, 2])
     
+    # Input Form
     with col_left:
         st.subheader("Rate your experience")
         with st.form("user_form"):
-            st.write("Click to rate:")
-            # Use st.feedback (Newer Streamlit versions) or slider if preferred
             rating_input = st.feedback("stars")
             stars = (rating_input + 1) if rating_input is not None else 5
             
@@ -150,59 +145,58 @@ with tab_user:
                     time.sleep(1)
                     st.rerun()
 
+    # Display Feed
     with col_right:
         data = load_data()
-        if not data.empty:
-            # Filter out error rows for users
-            if 'ai_reply' in data.columns:
-                clean_data = data[~data['ai_reply'].astype(str).str.contains("Error|429|404", case=False, na=False)]
-            else:
-                clean_data = data
+        
+        # Filter out rows with API errors so users don't see them
+        if not data.empty and 'ai_reply' in data.columns:
+            clean_data = data[~data['ai_reply'].astype(str).str.contains("Error|429|404", case=False, na=False)]
+        else:
+            clean_data = data
             
-            if not clean_data.empty:
-                if 'rating' in clean_data.columns:
-                    avg_rating = clean_data['rating'].mean()
-                    st.markdown(f"### {avg_rating:.1f} ⭐⭐⭐⭐⭐ ({len(clean_data)} reviews)")
-                st.divider()
+        if not clean_data.empty:
+            # Show average rating
+            if 'rating' in clean_data.columns:
+                avg = clean_data['rating'].mean()
+                st.markdown(f"### {avg:.1f} ⭐⭐⭐⭐⭐ ({len(clean_data)} reviews)")
+            st.divider()
+            
+            # Render reviews
+            for idx, row in clean_data.sort_index(ascending=False).iterrows():
+                c1, c2 = st.columns([1, 10])
                 
-                # Robust Display Loop
-                for index, row in clean_data.sort_index(ascending=False).iterrows():
-                    c1, c2 = st.columns([1, 10])
-                    
-                    # Use .get() to avoid crashing if columns are missing
-                    avatar = row.get('avatar', '👤')
-                    name = row.get('user_name', 'Anonymous')
-                    timestamp = row.get('timestamp', '')
-                    rating_val = int(row.get('rating', 5))
-                    text_val = row.get('review_text', '')
-                    reply_val = str(row.get('ai_reply', '')).strip() 
+                # Safely get fields
+                avatar = row.get('avatar', '👤')
+                name = row.get('user_name', 'Anonymous')
+                ts = row.get('timestamp', '')
+                stars = int(row.get('rating', 5))
+                txt = row.get('review_text', '')
+                reply = str(row.get('ai_reply', '')).strip()
 
-                    with c1: st.markdown(f"## {avatar}")
-                    with c2:
-                        st.markdown(f"**{name}** &nbsp; <span style='color:grey'>{timestamp}</span>", unsafe_allow_html=True)
-                        st.markdown(f"{'⭐' * rating_val}")
-                        st.write(text_val)
-                        
-                        # Only show if reply is valid
-                        if reply_val and reply_val.lower() != 'nan':
-                            st.info(f"**Response from the owner:**\n\n{reply_val}")
-                        
-                        st.divider()
+                with c1: st.markdown(f"## {avatar}")
+                with c2:
+                    st.markdown(f"**{name}** &nbsp; <span style='color:grey'>{ts}</span>", unsafe_allow_html=True)
+                    st.markdown(f"{'⭐' * stars}")
+                    st.write(txt)
+                    
+                    if reply and reply.lower() != 'nan':
+                        st.info(f"**Owner Response:**\n\n{reply}")
+                    st.divider()
         else:
             st.info("No reviews yet.")
 
-# === DASHBOARD 2: ADMIN VIEW (Updated with Analytics) ===
+# === ADMIN TAB ===
 with tab_admin:
     st.header("Internal Feedback Monitor")
     
-    if st.button("🔄 Refresh Admin Data"): 
+    if st.button("🔄 Refresh Data"): 
         st.rerun()
 
     data = load_data()
     
     if not data.empty:
-        # --- 1. DATA CLEANING (As per Report) ---
-        # Filter out rows where the AI reply contains an error message
+        # 1. Clean Data (Filter out API errors)
         if 'ai_reply' in data.columns:
             clean_data = data[~data['ai_reply'].astype(str).str.contains("Error|429|404", case=False, na=False)]
         else:
@@ -210,49 +204,48 @@ with tab_admin:
             
         if not clean_data.empty:
             
-            # --- 2. ANALYTICS (Bonus Feature) ---
+            # 2. Analytics Section
             st.subheader("📊 Analytics Overview")
             
-            col1, col2, col3 = st.columns(3)
-            total_reviews = len(clean_data)
+            c1, c2, c3 = st.columns(3)
+            total = len(clean_data)
             
             if 'rating' in clean_data.columns:
-                avg_rating = clean_data['rating'].mean()
-                col1.metric("Total Reviews", total_reviews)
-                col2.metric("Average Rating", f"{avg_rating:.1f} ⭐")
+                avg = clean_data['rating'].mean()
+                c1.metric("Total Reviews", total)
+                c2.metric("Avg Rating", f"{avg:.1f} ⭐")
                 
-                # Count critical issues (1 & 2 stars)
-                critical_issues = len(clean_data[clean_data['rating'] <= 2])
-                col3.metric("Critical Issues", critical_issues, delta_color="inverse")
+                # Flag low ratings (1-2 stars)
+                issues = len(clean_data[clean_data['rating'] <= 2])
+                c3.metric("Critical Issues", issues, delta_color="inverse")
             
             st.markdown("---")
 
-            # Visual Charts
-            c_chart1, c_chart2 = st.columns(2)
+            # Charts
+            chart1, chart2 = st.columns(2)
             
-            with c_chart1:
-                st.caption("Star Rating Distribution")
+            with chart1:
+                st.caption("Rating Distribution")
                 if 'rating' in clean_data.columns:
-                    rating_counts = clean_data['rating'].value_counts().sort_index()
-                    st.bar_chart(rating_counts, color="#FF4B4B") # Red bars
+                    counts = clean_data['rating'].value_counts().sort_index()
+                    st.bar_chart(counts, color="#FF4B4B")
 
-            with c_chart2:
-                st.caption("Daily Review Volume")
+            with chart2:
+                st.caption("Daily Volume")
                 if 'timestamp' in clean_data.columns:
                     try:
-                        # Ensure date sorting
-                        daily_counts = clean_data['timestamp'].value_counts().sort_index()
-                        st.line_chart(daily_counts, color="#1F77B4") # Blue line
+                        dates = clean_data['timestamp'].value_counts().sort_index()
+                        st.line_chart(dates, color="#1F77B4")
                     except:
-                        st.info("Trend data unavailable.")
+                        st.info("No trend data.")
 
             st.markdown("---")
 
-            # --- 3. DATA TABLE (Cleaned) ---
+            # 3. Raw Data Table
             st.subheader("Recent Submissions")
             st.dataframe(clean_data.sort_index(ascending=False), use_container_width=True)
             
         else:
-            st.info("No valid reviews found (all entries may be errors).")
+            st.info("No valid data found (check for API errors).")
     else:
         st.info("No reviews found.")
