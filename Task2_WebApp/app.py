@@ -31,7 +31,6 @@ else:
 
 def get_gemini_response(prompt):
     try:
-        # Using the model you confirmed works
         model = genai.GenerativeModel("models/gemini-flash-latest")
         response = model.generate_content(prompt)
         return response.text
@@ -45,7 +44,10 @@ def load_data():
     if sheet:
         try:
             data = sheet.get_all_records()
-            return pd.DataFrame(data)
+            df = pd.DataFrame(data)
+            # Force lowercase columns for safety
+            df.columns = [c.lower() for c in df.columns]
+            return df
         except Exception as e:
             return pd.DataFrame()
     return pd.DataFrame()
@@ -137,7 +139,6 @@ with tab_user:
     with col_right:
         data = load_data()
         if not data.empty:
-            # Filter out error rows
             if 'ai_reply' in data.columns:
                 clean_data = data[~data['ai_reply'].astype(str).str.contains("Error|429|404", case=False, na=False)]
             else:
@@ -149,17 +150,15 @@ with tab_user:
                     st.markdown(f"### {avg_rating:.1f} ⭐⭐⭐⭐⭐ ({len(clean_data)} reviews)")
                 st.divider()
                 
-                # --- UPDATED DISPLAY LOGIC ---
                 for index, row in clean_data.sort_index(ascending=False).iterrows():
                     c1, c2 = st.columns([1, 10])
                     
-                    # Use .get() to avoid crashing if columns are missing
                     avatar = row.get('avatar', '👤')
                     name = row.get('user_name', 'Anonymous')
                     timestamp = row.get('timestamp', '')
                     rating_val = int(row.get('rating', 5))
                     text_val = row.get('review_text', '')
-                    reply_val = str(row.get('ai_reply', '')).strip() # Force string and strip whitespace
+                    reply_val = str(row.get('ai_reply', '')).strip()
 
                     with c1: st.markdown(f"## {avatar}")
                     with c2:
@@ -167,7 +166,6 @@ with tab_user:
                         st.markdown(f"{'⭐' * rating_val}")
                         st.write(text_val)
                         
-                        # Only show if reply is not empty and not 'nan'
                         if reply_val and reply_val.lower() != 'nan':
                             st.info(f"**Response from the owner:**\n\n{reply_val}")
                         
@@ -179,31 +177,9 @@ with tab_user:
 with tab_admin:
     st.header("Internal Feedback Monitor")
     
-    col_a, col_b = st.columns(2)
-    with col_a:
-        if st.button("🔄 Refresh Admin Data"): 
-            st.rerun()
-    with col_b:
-        if st.button("🗑️ Delete Corrupted Reviews"):
-            data = load_data()
-            sheet = get_google_sheet()
-            
-            if not data.empty and sheet:
-                if 'ai_reply' in data.columns:
-                    clean_data = data[~data['ai_reply'].astype(str).str.contains("Error|429|404", case=False, na=False)]
-                    try:
-                        sheet.clear()
-                        sheet.append_row(clean_data.columns.tolist())
-                        sheet.append_rows(clean_data.values.tolist())
-                        st.success("Corrupted data removed and Sheet updated!")
-                        time.sleep(1)
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Failed to update sheet: {e}")
-                else:
-                    st.warning("Data format incorrect.")
-            else:
-                st.warning("No data to clean.")
+    # Simple Refresh Button (No more Delete button)
+    if st.button("🔄 Refresh Admin Data"): 
+        st.rerun()
 
     data = load_data()
     if not data.empty:
