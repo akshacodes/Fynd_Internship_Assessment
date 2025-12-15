@@ -11,7 +11,7 @@ from datetime import datetime
 # Page config must be the first Streamlit command
 st.set_page_config(page_title="Fynd Reviews", layout="wide")
 
-# --- AUTHENTICATION ---
+#  AUTHENTICATION 
 
 @st.cache_resource
 def get_google_sheet():
@@ -42,7 +42,7 @@ def get_gemini_response(prompt):
     except Exception as e:
         return f"Error: {str(e)}"
 
-# --- DATA FUNCTIONS ---
+#  DATA FUNCTIONS 
 
 def load_data():
     sheet = get_google_sheet()
@@ -83,7 +83,7 @@ def save_entry(rating, text, reply, summary, action):
     except Exception as e:
         st.error(f"Save failed: {e}")
 
-# --- AI LOGIC ---
+#  AI LOGIC 
 
 def generate_ai_content(review_text, rating):
     # 1. Generate polite reply for the user
@@ -117,7 +117,7 @@ def generate_ai_content(review_text, rating):
 
     return reply, summary, action
 
-# --- MAIN UI ---
+#  MAIN UI 
 
 st.title("🚀 Fynd Dashboard")
 
@@ -219,7 +219,7 @@ with tab_admin:
                 issues = len(clean_data[clean_data['rating'] <= 2])
                 c3.metric("Critical Issues", issues, delta_color="inverse")
             
-            st.markdown("---")
+            st.markdown("")
 
             # Charts
             chart1, chart2 = st.columns(2)
@@ -239,7 +239,7 @@ with tab_admin:
                     except:
                         st.info("No trend data.")
 
-            st.markdown("---")
+            st.markdown("")
 
             # 3. Raw Data Table
             st.subheader("Recent Submissions")
